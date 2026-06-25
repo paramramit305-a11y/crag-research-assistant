@@ -1,0 +1,13 @@
+langchain
+langchain-groq
+langchain-community
+langchain-text-splitters
+langgraph
+chromadb
+pysqlite3-binary
+sentence-transformers
+scikit-learn
+pypdf
+python-dotenv
+streamlit
+tavily-python
