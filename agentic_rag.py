@@ -76,15 +76,19 @@ def grade_node(state: RAGState):
     irrelevant_docs = []
 
     for doc in documents:
-        grading_prompt = f"""You are a relevance grader.
-Does the following document contain useful information to answer the query?
+        grading_prompt = f"""You are a strict relevance grader.
+        
+The document must contain information that DIRECTLY and Specifically answers 
+the query below. Sharing a topic, keyword, or general subject area is NOT 
+enough - the document must actually help answer this exact question.
 
 Document:
 {doc["document"]}
 
 Query: {query}
 
-Reply with ONLY 'yes' or 'no'."""
+Would this specific document, on its own, help answer this specific query 
+with concrete relevant information? Reply with ONLY 'yes' or 'no'."""
 
         response = safe_llm_invoke(grading_prompt)
         grade = clean_llm_output(response.content).lower()
