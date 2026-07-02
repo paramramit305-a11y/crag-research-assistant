@@ -12,15 +12,19 @@ query = st.text_input("Ask a question", placeholder="e.g. What is the attention 
 
 if st.button("Search") and query.strip():
     with st.spinner("Running CRAG pipeline..."):
-        result = app.invoke({
-            "query": query,
-            "original_query": query,
-            "documents": [],
-            "answer": "",
-            "retry_count": 0,
-            "is_relevant": "",
-            "source": "vector_store"
-        })
+        try:
+            result = app.invoke({
+                "query": query,
+                "original_query": query,
+                "documents": [],
+                "answer": "",
+                "retry_count": 0,
+                "is_relevant": "",
+                "source": "vector_store"
+            })
+        except Exception:
+            st.error("Server thoda busy hai (rate limit) — kripya 30-60 seconds baad dobara try karo 🙏")
+            st.stop()
 
     source = result.get("source", "vector_store")
 
