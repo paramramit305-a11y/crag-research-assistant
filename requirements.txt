@@ -1,6 +1,7 @@
 langchain
 langchain-groq
 langchain-community
+langchain-tavily
 langchain-text-splitters
 langgraph
 chromadb
