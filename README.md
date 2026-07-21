@@ -5,7 +5,7 @@ A self-correcting RAG system built with LangGraph — grades each retrieved docu
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![LangGraph](https://img.shields.io/badge/LangGraph-state_machine-1C3C3C?style=flat-square)](https://langchain-ai.github.io/langgraph/)
 [![LangChain](https://img.shields.io/badge/LangChain-pipeline-1C3C3C?style=flat-square)](https://langchain.com)
-[![Groq](https://img.shields.io/badge/Groq-qwen3--32b-F55036?style=flat-square)](https://groq.com)
+[![Groq](https://img.shields.io/badge/Groq-GPT--OSS-F55036?style=flat-square)](https://groq.com)
 [![Streamlit](https://img.shields.io/badge/Streamlit-UI-FF4B4B?style=flat-square&logo=streamlit&logoColor=white)](https://streamlit.io)
 
 **[Live demo →](https://crag-research-assistant.streamlit.app)**
@@ -17,7 +17,7 @@ Ask a question about AI/ML research — the system searches a local vector store
 - If documents are relevant — refines them to extract only the useful parts, then generates an answer
 - If documents are partially relevant — retries with a rephrased query before deciding
 - If local documents consistently fail — falls back to a live Tavily web search and answers from that instead
-- Every response tells you whether the answer came from local papers or the web
+- Every response tells you whether the answer came from local papers or the web, along with how many retry attempts the pipeline took
 
 ## Demo
 
@@ -25,10 +25,9 @@ Local paper query — answer found in vector store:
 
 <img width="1366" height="626" alt="Screenshot 2026-06-25 123925" src="https://github.com/user-attachments/assets/51b8bbdd-4040-4b0a-902f-60544ac9b9f5" />
 
+Out-of-scope query — system detects it and falls back to web search automatically:
+
 <img width="1366" height="651" alt="Screenshot 2026-06-25 141728" src="https://github.com/user-attachments/assets/32ca1069-defa-4116-b847-5f7a656894dd" />
-
-
-When a query falls outside the knowledge base, the system routes to web search automatically and flags it in the UI instead of answering from irrelevant chunks.
 
 ## Why I built it this way
 
@@ -36,37 +35,50 @@ Standard RAG pipelines have a silent failure mode: the retriever always returns 
 
 I wanted to fix that. After building a basic RAG pipeline (LangChain + ChromaDB) as an earlier project, I came across the CRAG paper (arXiv:2401.15884) which formalises exactly this problem — retrieved documents need to be evaluated before generation, not blindly trusted. I used LangGraph to implement this as an explicit state machine, so every routing decision (retry, refine, web search) is a visible node in the graph rather than hidden inside prompt logic.
 
-The per-document grading was a deliberate choice over grading the full context at once — grading all retrieved chunks together means one relevant document can mask four irrelevant ones. Grading individually and filtering before generation gives the LLM a cleaner context to work with.
+The per-document grading was a deliberate choice over grading the full context at once — grading all retrieved chunks together means one relevant document can mask four irrelevant ones. Grading individually and filtering before generation gives the LLM a cleaner context to work with, while a single batched grading call keeps latency and API usage reasonable.
+
+The pipeline also wraps every LLM call with exponential-backoff retry handling, since a multi-node graph makes several calls per query and needs to degrade gracefully under rate limits rather than fail the whole request.
 
 ## How it works
 
-```
+```text
 app.py (Streamlit)
-   │  takes a query, calls LangGraph app.invoke()
-   ▼
+│
+│  Takes a query and calls LangGraph `app.invoke()`
+│
+▼
 agentic_rag.py (LangGraph StateGraph)
-   │
-   ├── retrieve_node      → ChromaDB semantic search (top-5 chunks)
-   │
-   ├── grade_node         → LLM grades each document individually (yes/no)
-   │                        returns: "yes" / "no" / "ambiguous"
-   │
-   ├── [conditional edge] → yes      → knowledge_refine_node
-   │                        ambiguous → retry_node (if retry_count < 1)
-   │                                    else knowledge_refine_node
-   │                        no        → retry_node (if retry_count < 2)
-   │                                    else web_search_node
-   │
-   ├── knowledge_refine_node → LLM strips irrelevant content from each doc
-   │
-   ├── retry_node         → LLM rephrases query, loops back to retrieve
-   │
-   ├── web_search_node    → LLM generates optimised search query → Tavily
-   │
-   └── generate_node      → answers from original query against refined context
+│
+├── retrieve_node
+│   └── ChromaDB semantic search (top-5 chunks)
+│
+├── grade_node
+│   ├── Single batched LLM call grades every retrieved
+│   │   document individually (yes/no per document)
+│   └── Returns: "yes" / "no" / "ambiguous"
+│
+├── [conditional edge]
+│   ├── yes       → knowledge_refine_node
+│   ├── ambiguous → retry_node (if retry_count < 1)
+│   │               else → knowledge_refine_node
+│   └── no        → retry_node (if retry_count < 1)
+│                   else → web_search_node
+│
+├── knowledge_refine_node
+│   └── LLM strips irrelevant content from each document
+│
+├── retry_node
+│   └── LLM rephrases query → loops back to retrieve
+│
+├── web_search_node
+│   └── LLM generates optimised search query → Tavily
+│
+└── generate_node
+    └── Answers from original query against refined context
 ```
 
 The state (`RAGState`) carries `original_query` separately from `query` so that after retries and rephrasing, the final answer is always generated against what the user actually asked — not a mid-pipeline reformulation.
+
 
 ## Stack
 
@@ -75,21 +87,34 @@ The state (`RAGState`) carries `original_query` separately from `query` so that 
 | Graph orchestration | LangGraph | Explicit state machine — routing decisions are nodes, not hidden prompt logic |
 | Vector store | ChromaDB (persistent) | Local, no API cost, persists across runs |
 | Embeddings | `all-MiniLM-L6-v2` (sentence-transformers) | Runs fully on CPU, zero API cost |
-| LLM | Groq — `qwen/qwen3-32b` | Free tier, fast enough for multi-node graphs with several LLM calls per query |
-| Web search fallback | Tavily | Clean API, returns structured content rather than raw HTML |
+| LLM | Groq — `openai/gpt-oss-120b` for generation, `openai/gpt-oss-20b` for grading/routing | Free tier, fast inference; splitting a cheap model for high-volume grading calls from a stronger model for final answers keeps cost and latency down |
+| Web search fallback | Tavily (`langchain-tavily`) | Clean API, returns structured content rather than raw HTML |
 | Frontend | Streamlit | Fastest path from a working Python graph to a usable UI |
+
 
 ## Project structure
 
-```
+```text
 crag-research-assistant/
-├── app.py               # Streamlit UI — takes query, calls graph, shows answer + source
-├── agentic_rag.py       # LangGraph graph — all nodes, edges, routing logic
-├── rag_core.py          # EmbeddingManager, VectorStoreManager, RAGRetriever classes
+│
+├── app.py
+│   └── Streamlit UI — takes query, calls graph, shows answer + source
+│
+├── agentic_rag.py
+│   └── LangGraph graph — all nodes, edges, and routing logic
+│
+├── rag_core.py
+│   └── EmbeddingManager, VectorStoreManager, and RAGRetriever classes
+│
 ├── data/
-│   ├── pdfs/            # 9 AI/ML research papers (ingested at setup)
-│   └── vector_store/    # ChromaDB persistent store (2182 chunks)
+│   ├── pdfs/
+│   │   └── 9 AI/ML research papers (ingested at setup)
+│   │
+│   └── vector_store/
+│       └── ChromaDB persistent store (2182 chunks)
+│
 └── requirements.txt
+    └── Project dependencies
 ```
 
 ## Knowledge base
@@ -113,10 +138,9 @@ pip install -r requirements.txt
 ```
 
 Create a `.env` file:
-```
+
 GROQ_API_KEY=your_groq_api_key_here
 TAVILY_API_KEY=your_tavily_api_key_here
-```
 
 The vector store is already included in the repo — no ingestion step needed locally. Run directly:
 
@@ -134,7 +158,7 @@ The knowledge base is intentionally scoped to AI/ML research papers. When a quer
 
 ## Known limitations
 
-- **Grading adds latency** — each retrieved document is graded with a separate LLM call, so a 5-document retrieval triggers 5 grading calls before generation. This is intentional (per-document precision over bulk grading) but makes the pipeline slower than standard RAG for simple queries.
+- **Hosted model availability is provider-dependent** — this project runs on Groq's hosted open-weight models, which are periodically deprecated and replaced with newer ones. Model IDs are centralized in `agentic_rag.py` to make migration a one-line change per model when that happens.
 - **Knowledge base is static** — adding new papers requires re-running the ingestion notebook locally and pushing the updated vector store to the repo.
 - **Web search fallback depends on Tavily quota** — free tier has monthly request limits, so heavy usage will hit the cap.
 
