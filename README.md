@@ -23,11 +23,13 @@ Ask a question about AI/ML research — the system searches a local vector store
 
 Local paper query — answer found in vector store:
 
-<img width="1366" height="626" alt="Screenshot 2026-06-25 123925" src="https://github.com/user-attachments/assets/51b8bbdd-4040-4b0a-902f-60544ac9b9f5" />
+<img width="1366" height="656" alt="Screenshot 2026-07-21 145913" src="https://github.com/user-attachments/assets/0b26397e-999d-4577-98c3-5c6cb6e5a253" />
+
 
 Out-of-scope query — system detects it and falls back to web search automatically:
 
-<img width="1366" height="651" alt="Screenshot 2026-06-25 141728" src="https://github.com/user-attachments/assets/32ca1069-defa-4116-b847-5f7a656894dd" />
+<img width="1366" height="625" alt="Screenshot 2026-07-21 150023" src="https://github.com/user-attachments/assets/87699678-4278-49df-a0fc-765ae434b458" />
+
 
 ## Why I built it this way
 
