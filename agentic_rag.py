@@ -33,13 +33,13 @@ rag_retriever = RAGRetriever(embedding_manager, vector_store)
 generation_llm = ChatGroq(
     model="openai/gpt-oss-120b",
     groq_api_key=os.getenv("GROQ_API_KEY"),
-    model_kwargs={"reasoning_effort": "medium"}
+    reasoning_effort="medium"
 )
 
 utility_llm = ChatGroq(
     model="openai/gpt-oss-20b",
     groq_api_key=os.getenv("GROQ_API_KEY"),
-    model_kwargs={"reasoning_effort": "low"}
+    reasoning_effort="low"
 )
 
 
