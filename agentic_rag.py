@@ -5,13 +5,13 @@ from typing import TypedDict
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
 from langchain_groq import ChatGroq
-from langchain_community.tools.tavily_search import TavilySearchResults
+from langchain_tavily import TavilySearch
 from groq import RateLimitError, APIStatusError
 from rag_core import Embeddingmanager, VectorStoreManager, RAGRetriever
 
 load_dotenv()
 
-web_search_tool = TavilySearchResults(
+web_search_tool = TavilySearch(
     max_results=3,
     tavily_api_key=os.getenv("TAVILY_API_KEY")
 )
@@ -198,10 +198,11 @@ Query: {original_query}"""
 
     print(f"Web search query: {search_query}")
 
-    results = web_search_tool.invoke(search_query)
+    raw_results = web_search_tool.invoke(search_query)
+    result_list = raw_results.get("results", []) if isinstance(raw_results, dict) else raw_results
 
     web_docs = []
-    for result in results:
+    for result in result_list:
         web_docs.append({
             "id": f"web_{result.get('url', '')}",
             "document": result.get("content", ""),
