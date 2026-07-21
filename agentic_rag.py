@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
 from langchain_groq import ChatGroq
 from langchain_community.tools.tavily_search import TavilySearchResults
-from groq import RateLimitError
+from groq import RateLimitError, APIStatusError
 from rag_core import Embeddingmanager, VectorStoreManager, RAGRetriever
 
 load_dotenv()
@@ -30,23 +30,32 @@ embedding_manager = Embeddingmanager()
 vector_store = VectorStoreManager()
 rag_retriever = RAGRetriever(embedding_manager, vector_store)
 
-llm = ChatGroq(model="qwen/qwen3-32b", groq_api_key=os.getenv("GROQ_API_KEY"))
+generation_llm = ChatGroq(
+    model="openai/gpt-oss-120b",
+    groq_api_key=os.getenv("GROQ_API_KEY"),
+    model_kwargs={"reasoning_effort": "medium"}
+)
+
+utility_llm = ChatGroq(
+    model="openai/gpt-oss-20b",
+    groq_api_key=os.getenv("GROQ_API_KEY"),
+    model_kwargs={"reasoning_effort": "low"}
+)
 
 
-def safe_llm_invoke(prompt, max_retries=4, base_wait=4):
-    """
-    Wrapper around llm.invoke() that retries with exponential backoff
-    when Groq's rate limit (429) is hit, instead of crashing the app.
-    """
+def safe_llm_invoke(llm_instance, prompt, max_retries=4, base_wait=4):
     for attempt in range(max_retries):
         try:
-            return llm.invoke(prompt)
+            return llm_instance.invoke(prompt)
         except RateLimitError:
             if attempt == max_retries - 1:
                 raise
             wait = base_wait * (2 ** attempt)
             print(f"Rate limited — retrying in {wait}s (attempt {attempt + 1}/{max_retries})")
             time.sleep(wait)
+        except APIStatusError as e:
+            print(f"Groq API error (not a rate limit): {e}")
+            raise
 
 
 def clean_llm_output(text: str) -> str:
@@ -72,33 +81,43 @@ def grade_node(state: RAGState):
     if not documents:
         return {"is_relevant": "no"}
 
-    relevant_docs = []
-    irrelevant_docs = []
+    docs_block = "\n\n".join(
+        [f"[Document {i + 1}]\n{doc['document']}" for i, doc in enumerate(documents)]
+    )
 
-    for doc in documents:
-        grading_prompt = f"""You are a strict relevance grader.
-        
-The document must contain information that DIRECTLY and Specifically answers 
-the query below. Sharing a topic, keyword, or general subject area is NOT 
-enough - the document must actually help answer this exact question.
+    grading_prompt = f"""You are a strict relevance grader.
 
-Document:
-{doc["document"]}
+For each document below, decide if it DIRECTLY and specifically helps answer the query.
+Sharing a topic, keyword, or general subject area is NOT enough - the document must actually
+help answer this exact question with concrete relevant information.
+
+{docs_block}
 
 Query: {query}
 
-Would this specific document, on its own, help answer this specific query 
-with concrete relevant information? Reply with ONLY 'yes' or 'no'."""
+Reply with exactly {len(documents)} lines, one per document, in this exact format:
+1: yes
+2: no
+3: yes
 
-        response = safe_llm_invoke(grading_prompt)
-        grade = clean_llm_output(response.content).lower()
+No other text, no explanation."""
 
-        if "yes" in grade:
+    response = safe_llm_invoke(utility_llm, grading_prompt)
+    grades_text = clean_llm_output(response.content)
+
+    grades = {}
+    for line in grades_text.splitlines():
+        match = re.match(r"\s*(\d+)\s*[:\-]\s*(yes|no)", line.strip(), re.IGNORECASE)
+        if match:
+            grades[int(match.group(1))] = match.group(2).lower()
+
+    relevant_docs = []
+    for i, doc in enumerate(documents):
+        grade = grades.get(i + 1, "no")
+        if grade == "yes":
             relevant_docs.append(doc)
-        else:
-            irrelevant_docs.append(doc)
 
-    print(f"Relevant: {len(relevant_docs)} | Irrelevant: {len(irrelevant_docs)}")
+    print(f"Relevant: {len(relevant_docs)} | Irrelevant: {len(documents) - len(relevant_docs)}")
 
     total = len(documents)
     relevant_count = len(relevant_docs)
@@ -131,7 +150,7 @@ Query: {query}
 
 Refined knowledge:"""
 
-        response = safe_llm_invoke(refine_prompt)
+        response = safe_llm_invoke(utility_llm, refine_prompt)
         refined_text = clean_llm_output(response.content).strip()
 
         if refined_text:
@@ -153,7 +172,7 @@ def retry_node(state: RAGState):
 Rephrase this query differently to retrieve more relevant documents from a vector store.
 Return ONLY the rephrased query, nothing else."""
 
-    response = safe_llm_invoke(retry_prompt)
+    response = safe_llm_invoke(utility_llm, retry_prompt)
     new_query = clean_llm_output(response.content).strip()
 
     print(f"Original: {original_query}")
@@ -174,7 +193,7 @@ Return ONLY the search query, nothing else.
 
 Query: {original_query}"""
 
-    response = safe_llm_invoke(search_prompt)
+    response = safe_llm_invoke(utility_llm, search_prompt)
     search_query = clean_llm_output(response.content).strip()
 
     print(f"Web search query: {search_query}")
@@ -215,7 +234,7 @@ Question: {original_query}
 
 Answer:"""
 
-    response = safe_llm_invoke(generation_prompt)
+    response = safe_llm_invoke(generation_llm, generation_prompt)
     content = clean_llm_output(response.content)
 
     return {"answer": content}
@@ -233,7 +252,7 @@ def route_after_grading(state: RAGState) -> str:
         else:
             return "refine"
     else:
-        if retry_count < 2:
+        if retry_count < 1:
             return "retry"
         else:
             return "web_search"
