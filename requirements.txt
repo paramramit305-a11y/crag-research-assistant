@@ -12,4 +12,5 @@ pypdf
 python-dotenv
 streamlit
 tavily-python
+torch
 torchvision
