@@ -111,6 +111,9 @@ No other text, no explanation."""
         if match:
             grades[int(match.group(1))] = match.group(2).lower()
 
+    if not grades:
+        print(f"WARNING: could not parse grades. Raw output: {grades_text!r}")
+
     relevant_docs = []
     for i, doc in enumerate(documents):
         grade = grades.get(i + 1, "no")
@@ -119,12 +122,11 @@ No other text, no explanation."""
 
     print(f"Relevant: {len(relevant_docs)} | Irrelevant: {len(documents) - len(relevant_docs)}")
 
-    total = len(documents)
     relevant_count = len(relevant_docs)
 
     if relevant_count == 0:
         return {"is_relevant": "no", "documents": documents}
-    elif relevant_count == total:
+    elif relevant_count >= 2:
         return {"is_relevant": "yes", "documents": relevant_docs}
     else:
         return {"is_relevant": "ambiguous", "documents": relevant_docs}
@@ -158,6 +160,10 @@ Refined knowledge:"""
                 **doc,
                 "document": refined_text
             })
+
+    if not refined_docs:
+        print("WARNING: refine returned nothing, using original documents")
+        refined_docs = documents
 
     print(f"Refined {len(refined_docs)} documents")
     return {"documents": refined_docs}
