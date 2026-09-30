@@ -1,6 +1,12 @@
 import time
 import streamlit as st
 from agentic_rag import app
+import re
+
+def fix_latex(text: str) -> str:
+    text = re.sub(r"\\\[(.*?)\\\]", r"$$\1$$", text, flags=re.DOTALL)
+    text = re.sub(r"\\\((.*?)\\\)", r"$\1$", text, flags=re.DOTALL)
+    return text
 
 st.set_page_config(page_title="CRAG Research Assistant", page_icon="🧠", layout="wide")
 
@@ -176,6 +182,17 @@ if run_search and query.strip():
         """,
         unsafe_allow_html=True,
     )
-    st.write(result["answer"])
+    st.markdown(fix_latex(result["answer"]))
+    
+    docs = result.get("documents", [])
+    if docs:
+        with st.expander("Sources"):
+            seen = set()
+            for d in docs:
+                src = d.get("metadata", {}).get("source", "unknown")
+                if src not in seen:
+                    seen.add(src)
+                    st.write(f"- {src}")
+    
 elif run_search:
     st.warning("Please enter a question first.")
