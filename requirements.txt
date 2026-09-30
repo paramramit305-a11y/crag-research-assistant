@@ -12,3 +12,4 @@ pypdf
 python-dotenv
 streamlit
 tavily-python
+torchvision
