@@ -6,13 +6,14 @@ from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
 from langchain_groq import ChatGroq
 from langchain_tavily import TavilySearch
+from datetime import date
 from groq import RateLimitError, APIStatusError
 from rag_core import Embeddingmanager, VectorStoreManager, RAGRetriever
 
 load_dotenv()
 
 web_search_tool = TavilySearch(
-    max_results=3,
+    max_results=5,
     tavily_api_key=os.getenv("TAVILY_API_KEY")
 )
 
@@ -194,7 +195,10 @@ def web_search_node(state: RAGState):
     print("--- WEB SEARCH NODE ---")
     original_query = state.get("original_query", state["query"])
 
+    today = date.today().strftime("%B %d, %Y")
     search_prompt = f"""Convert this query into an effective web search query.
+Today's date is {today}. If the query asks about the latest, current, or most recent
+events, include the current year ({date.today().year}) in the search query.
 Return ONLY the search query, nothing else.
 
 Query: {original_query}"""
@@ -223,7 +227,6 @@ Query: {original_query}"""
     print(f"Web search returned {len(web_docs)} results")
     return {"documents": web_docs, "source": "web_search"}
 
-
 def generate_node(state: RAGState):
     print("--- GENERATE NODE ---")
     original_query = state.get("original_query", state["query"])
@@ -231,8 +234,12 @@ def generate_node(state: RAGState):
 
     context = "\n\n".join([doc["document"] for doc in documents])
 
+    today = date.today().strftime("%B %d, %Y")
     generation_prompt = f"""Answer the question based ONLY on the following context.
 If the context doesn't contain enough information, say so honestly.
+Today's date is {today}. If the context has conflicting or outdated information
+(for example results from older years), prefer the most recent information and mention the year.
+Write any math using LaTeX with $...$ for inline and $$...$$ for display equations.
 
 Context:
 {context}
@@ -245,7 +252,6 @@ Answer:"""
     content = clean_llm_output(response.content)
 
     return {"answer": content}
-
 
 def route_after_grading(state: RAGState) -> str:
     is_relevant = state["is_relevant"]
